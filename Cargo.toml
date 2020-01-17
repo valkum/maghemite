@@ -1,0 +1,24 @@
+[package]
+name = "maghemite"
+version = "0.1.0"
+authors = ["Rudi Floren <rudi.floren@gmail.com>"]
+edition = "2018"
+repository = "https://github.com/valkum/maghemite"
+homepage = "https://github.com/valkum/maghemite"
+description = "A bot framework for the matrix protocol using remu written in Rust"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/maghemite"
+
+
+[dependencies]
+ruma-client = { path="../ruma-client", version = "0.3.0-beta.2", features = ["tls"]}
+ruma-api = "0.12.1"
+tokio = { version = "0.2.9", features = ["full"]}
+futures = "0.3.1"
+url = "2.1.1"
+hyper = "0.13.1"
+hyper-tls = "0.4.1"
+log = "0.4.8"
+aho-corasick = "0.7.6"
+rusqlite = "0.21.0"
+http = "0.2.0"
