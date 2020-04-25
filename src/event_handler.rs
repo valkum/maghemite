@@ -2,7 +2,7 @@ use futures::{stream, Future, Stream, StreamExt, TryStream, future::BoxFuture, c
 use std::collections::HashMap;
 use ruma_client::{self, api, api::r0::sync::sync_events::IncomingResponse};
 use ruma_client::events as ruma_events;
-use ruma_events::collections::all::{Event, RoomEvent};
+use ruma_events::collections::all::{Event, RoomEvent, StateEvent};
 use ruma_events::room::message::MessageEventContent;
 use ruma_client::identifiers::RoomId;
 use log::{error, warn, debug};
@@ -20,7 +20,7 @@ pub struct Context {
 
 
 pub trait EventHandler: Send + std::fmt::Debug  {
-    fn handle(&self, ctx: &Context, input: &Event) -> Result<(), Error>;
+    fn handle(&self, ctx: &Context, room_id: Option<RoomId>, input: &Event) -> Result<(), Error>;
 }
 
 pub trait StrippedHandler: Send + std::fmt::Debug  {
@@ -29,8 +29,8 @@ pub trait StrippedHandler: Send + std::fmt::Debug  {
 
 #[derive(Debug, Clone)]
 pub struct RoomMessageEventHandler {
-    pub handlers: HashMap<String, UnboundedSender<Result<ruma_events::room::message::MessageEvent, Error>>>,
-    pub unknown_handler: Option<UnboundedSender<Result<ruma_events::room::message::MessageEvent, Error>>>,
+    pub handlers: HashMap<String, UnboundedSender<Result<(Context, Option<RoomId>, Event), Error>>>,
+    pub unknown_handler: Option<UnboundedSender<Result<(Context, Option<RoomId>, Event), Error>>>,
 }
 impl RoomMessageEventHandler {
     pub fn new() -> Self {
@@ -44,7 +44,7 @@ impl RoomMessageEventHandler {
     pub fn new_cmd(
         &mut self,
         cmd: &str,
-    ) -> impl Stream<Item = Result<ruma_events::room::message::MessageEvent, Error>> {
+    ) -> impl Stream<Item = Result<(Context, RoomId, Event), Error>> {
         let (sender, receiver) = mpsc::unbounded();
 
         // let cmd = if cmd.starts_with("/") {
@@ -59,62 +59,59 @@ impl RoomMessageEventHandler {
     }
 
     /// Returns a stream which will yield a message when none of previously registered commands matches
-    pub fn unknown_cmd(&mut self) -> impl Stream<Item = Result<ruma_events::room::message::MessageEvent, Error>> {
+    pub fn unknown_cmd(&mut self) -> impl Stream<Item = Result<(Context, RoomId, Event), Error>> {
         let (sender, receiver) = mpsc::unbounded();
 
         self.unknown_handler = Some(sender);
 
         receiver.map(|x| x.map_err(|_| Error(InnerError::Channel)))
     }
+
+    fn handle_input(&self, ctx: &Context, room_id: Option<RoomId>, event: &Event) -> Result<(), Error> {
+        use aho_corasick::{AhoCorasickBuilder, MatchKind};
+    
+        let mut sndr: Option<UnboundedSender<Result<(Context, RoomId, Event), Error>>> = None;
+        match event.content {
+            MessageEventContent::Text(ref content) => {
+                let mut part = content.body.split_whitespace();
+                // let patterns = self.handlers.keys().collect<Vec<_>>();
+                // if let Some(mut cmd) = part.next() {
+                //     if let Some(name) = self.name.as_ref() {
+                //         if cmd.ends_with(name.as_str()) {
+                //             cmd = cmd.rsplitn(2, '@').skip(1).next().unwrap();
+                //         }
+                //     }
+                    if let Some(sender) = self.handlers.get("test")
+                    {
+                        sndr = Some(sender.clone());
+                    } else if let Some(ref sender) = self.unknown_handler
+                    {
+                        sndr = Some(sender.clone());
+                    }
+                dbg!(content);
+            }
+            _ => {}
+        }
+    
+        if let Some(sender) = sndr {
+            sender
+            .unbounded_send(Ok((ctx.clone(), room_id, event.clone())))
+                .unwrap_or_else(|e| error!("Error: {}", e));
+        }
+        Ok(())
+    }
 }
 
 impl EventHandler for RoomMessageEventHandler {
-    fn handle(&self, ctx: &Context, input: &Event) -> Result<(), Error>{
+    fn handle(&self, ctx: &Context, room_id: Option<RoomId>, input: &Event) -> Result<(), Error>{
         match input {
-            Event::RoomMessage(input) => handle_input(ctx, input),
+            RoomEvent::RoomMessage(input) => self.handle_input(ctx, room_id, input),
             _ => Err(Error(InnerError::Match))
         }
     }
 }
 
-fn handle_input(ctx: &Context, event: &ruma_events::room::message::MessageEvent) -> Result<(), Error> {
-    use aho_corasick::{AhoCorasickBuilder, MatchKind};
 
-    // client.receive_joined_timeline_event(&room_id, &e);
-
-
-    // let event = Arc::new(event.clone());
-    let mut sndr: Option<UnboundedSender<Result<ruma_events::room::message::MessageEvent, Error>>> = None;
-    match event.content {
-        MessageEventContent::Text(ref content) => {
-            // let mut part = content.body.split_whitespace();
-            // let patterns = self.handlers.keys().collect<Vec<_>>();
-            // if let Some(mut cmd) = part.next() {
-            //     if let Some(name) = self.name.as_ref() {
-            //         if cmd.ends_with(name.as_str()) {
-            //             cmd = cmd.rsplitn(2, '@').skip(1).next().unwrap();
-            //         }
-            //     }
-            //     if let Some(sender) = self.handlers.get(cmd)
-            //     {
-            //         sndr = Some(sender.clone());
-            //         message.text = Some(part.collect::<Vec<&str>>().join(" "));
-            //     } else if let Some(ref sender) = self.unknown_handler
-            //     {
-            //         sndr = Some(sender.clone());
-            //     }
-            dbg!(content);
-        }
-        _ => {}
-    }
-
-    if let Some(sender) = sndr {
-        sender
-            .unbounded_send(Ok(event.clone()))
-            .unwrap_or_else(|e| error!("Error: {}", e));
-    }
-    Ok(())
-}
 
 
 

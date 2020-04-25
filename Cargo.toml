@@ -11,14 +11,14 @@ documentation = "https://docs.rs/maghemite"
 
 
 [dependencies]
-ruma-client = { path="../ruma-client", version = "0.3.0-beta.2", features = ["tls"]}
-ruma-api = "0.12.1"
-tokio = { version = "0.2.9", features = ["full"]}
-futures = "0.3.1"
+ruma-client = { git = "https://github.com/matrix-org/matrix-rust-sdk", ref ="4f3eaa6537de"}
+ruma-api = "0.16.0-rc.2"
+tokio = { version = "0.2.19", features = ["full"]}
+futures = "0.3.4"
 url = "2.1.1"
-hyper = "0.13.1"
+hyper = "0.13.5"
 hyper-tls = "0.4.1"
 log = "0.4.8"
-aho-corasick = "0.7.6"
-rusqlite = "0.21.0"
-http = "0.2.0"
+aho-corasick = "0.7.10"
+# rusqlite = "0.21.0"
+http = "0.2.1"

@@ -18,17 +18,18 @@ use std::time::Duration;
 use std::convert::TryFrom;
 use http::Response as HttpResponse;
 
-use crate::event_handler::{Context, EventHandler, StrippedHandler};
+use crate::event_handler::{Context, EventHandler, RoomEventHandler, StateEventHandler, StrippedHandler};
 use crate::error::Error;
 
 pub struct BotConfig<'a> {
     homeserver_url: &'a str,
-    session: Option<Session>
+    session: Option<Session>,
+    batch_id: Option<String>,
 }
 
 impl<'a> BotConfig<'a> {
     pub fn new(homeserver_url: &'a str, session: Option<Session>) -> Self{
-        BotConfig { homeserver_url, session }
+        BotConfig { homeserver_url, session, batch_id: None }
     }
 }
 
@@ -37,13 +38,13 @@ impl<'a> BotConfig<'a> {
 /// Contains all configuration like `key`, `name`, etc. important handles to message the user and
 /// `request` to issue requests to the Telegram server
 #[derive(Debug)]
-pub struct Bot {
+pub struct Bot<'a> {
     pub client: Arc<ruma_client::HttpsClient>,
-    // client: ruma_client::HttpClient,
-    message_handlers: HashMap<ruma_client::events::EventType, Box<dyn EventHandler>>,
+    config: BotConfig<'a>,
+    event_handlers: HashMap<ruma_client::events::EventType, Box<dyn EventHandler>>,
     stripped_handlers: HashMap<String, Box<dyn StrippedHandler>>,
 }
-impl Bot {
+impl<'a> Bot<'a> {
     pub fn new(config: BotConfig) -> Bot {
         // @todo user_agent(format!("RustyMatrixBot/{}", env!("CARGO_PKG_VERSION")))?
         // let hyper_client = hyper::Client::builder().keep_alive(true).build_http();
@@ -54,7 +55,8 @@ impl Bot {
 
         Bot {
             client: Arc::new(client),
-            message_handlers: HashMap::new(), 
+            config: config,
+            event_handlers: HashMap::new(), 
             stripped_handlers: HashMap::new(),
         }
     }
@@ -64,7 +66,7 @@ impl Bot {
         let mut session = None;
         if session.is_none() {
             debug!("No session logging in as {}", username);
-            session = Some(self.client.log_in(username.into(), password.into(), None).await?);
+            session = Some(self.client.log_in(username.into(), password.into(), None, None).await?);
         }
         debug!("Logged in. Session is: {:?}", session);
         Ok(session.unwrap())
@@ -73,21 +75,23 @@ impl Bot {
 
     pub fn with_handler<H>(&mut self, event_type: ruma_client::events::EventType, handler: H) where H: EventHandler + 'static {
         debug!("Registered handler {:?}", type_name::<H>());
-        self.message_handlers.insert(event_type, Box::new(handler));
+        self.event_handlers.insert(event_type, Box::new(handler));
     }
+
     pub fn with_stripped_handler<H>(&mut self, state_type: String, handler: H) where H: StrippedHandler + 'static {
         debug!("Registered handler {:?}", type_name::<H>());
         self.stripped_handlers.insert(state_type, Box::new(handler));
     }
 
     pub fn process_updates(self) -> impl Stream<Item = Result<Option<Event>, Error>> {
-        self.client.sync(None, Some("s451444_27143592_3636_840651_317807_206_166800_43802_14".to_owned()), true)
+        self.client.sync(None, self.config.batch_id, true, Some(Duration::from_secs(10)))
         .map_ok(move |incoming| {
             let ctx = Context { client: self.client.clone() };
             
             for (room_id, room) in &incoming.rooms.invite {
                 for event in &room.invite_state.events {
                     if let ruma_events::EventResult::Ok(e) = event {
+                        // todo bring back type key for Hashmap
                         if let Some(handler) = self.stripped_handlers.get("test") {
                             handler.handle(&ctx, room_id.clone(), e);
                         } else {
@@ -97,7 +101,7 @@ impl Bot {
                 }
             }
             for (room_id, room) in &incoming.rooms.join {
-                let room_id = room_id.to_string();
+                // let room_id = room_id.to_string();
         
                 let matrix_room = {
                     for event in &room.state.events {
@@ -112,7 +116,12 @@ impl Bot {
         
                 for event in &room.timeline.events {
                     if let ruma_events::EventResult::Ok(e) = event {
-                        dbg!(e);
+                        
+                        if let Some(handler) = self.event_handlers.get(&ruma_events::EventType::RoomMessage) {
+                            handler.handle(&ctx, None, e);
+                        } else {
+                            debug!("Unhandled RoomMessage event. Register a RoomMessage EventHandler")
+                        } 
                         // if let Err(err) = handlers::handle(&ctx, &event).await {
                         //     match err {
                         //         HandlerError::Message(message) => {
@@ -155,23 +164,4 @@ impl Bot {
     pub fn into_future(self) -> impl Future<Output = ()> {
         self.process_updates().for_each(|_| async {()}).map(|_| ())
     }
-
-    // pub fn run_with<I>(self, other: I) 
-    // where
-    //     I: TryFuture + Send,
-    //     <I as TryFuture>::Error: Send,
-    //     <I as TryFuture>::Ok: Send
-    // {
-    //     tokio_scoped::scope(|scope| {
-    //         let bot = self.clone();
-    //         tokio::spawn(async {
-    //             &bot.into_future().await;
-    //             // join(, other.into_future()).await;
-    //         });
-    //     });
-    // }
-
-    // pub fn run(self) {
-    //     self.run_with(Ok(()));
-    // }
 }
